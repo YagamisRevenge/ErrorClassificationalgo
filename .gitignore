@@ -1,3 +1,6 @@
 csv_file/
 results/
 venv/
+__pycache__/
+*.pyc
+*.pyo
