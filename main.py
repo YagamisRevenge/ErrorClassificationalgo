@@ -108,10 +108,13 @@ class CSVTableModel(QtCore.QAbstractTableModel):
 
 
 class DetailedClassificationWindow(QtWidgets.QDialog):
-    def __init__(self, initial_values=None, parent=None):
+    def __init__(self, initial_values=None, row_number=None, total_rows=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Classification Help")
+        self.setWindowTitle(f"Classification Help - Row {row_number}/{total_rows}")
         self.setMinimumSize(600, 400)
+
+        self.row_number = row_number
+        self.total_rows = total_rows
 
         if initial_values is not None:
             self.responses = dict(initial_values)  
@@ -194,18 +197,23 @@ class DetailedClassificationWindow(QtWidgets.QDialog):
 
 
 class RowOverviewWindow(QtWidgets.QDialog):
-    def __init__(self, csv_data, parent=None):
+    def __init__(self, csv_data,row_number = 1, parent=None):
         super().__init__(parent)
         self.csv_data = csv_data
-        self.current_index = 0
+        self.current_index = row_number - 1
 
-        self.setWindowTitle("Row Overview")
+        self.row_label = QtWidgets.QLabel(f"Row {self.current_index + 1} of {len(self.csv_data)}")
+        self.row_label.setAlignment(QtCore.Qt.AlignCenter)
+
+        self.setWindowTitle(f"Row Overview - Row {self.current_index+1}/{len(self.csv_data)}")
         self.setMinimumSize(900, 600)
 
         main_layout = QtWidgets.QVBoxLayout()
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(10)
         self.setLayout(main_layout)
+
+        main_layout.addWidget(self.row_label)
 
         # 3 text areas
         self.question_edit = QtWidgets.QPlainTextEdit()
@@ -270,6 +278,8 @@ class RowOverviewWindow(QtWidgets.QDialog):
     def load_row_into_ui(self, index):
         if index < 0 or index >= len(self.csv_data):
             return
+        
+        self.current_index = index
         row = self.csv_data[index]
         question_text = row.get("question", "")
         true_text = row.get("true_answer", "")
@@ -278,6 +288,9 @@ class RowOverviewWindow(QtWidgets.QDialog):
         self.question_edit.setPlainText(question_text)
         self.true_answer_edit.setPlainText(true_text)
         self.pred_answer_edit.setPlainText(pred_text)
+
+        self.setWindowTitle(f"Row Overview - Row {self.current_index + 1}/{len(self.csv_data)}")
+        self.row_label.setText(f"Row {self.current_index + 1} of {len(self.csv_data)}")
 
         is_correct = row.get("is_correct", "").strip().lower()
         if is_correct == "true":
@@ -308,7 +321,7 @@ class RowOverviewWindow(QtWidgets.QDialog):
         for col in ERROR_COLUMNS:
             current_answers[col] = self.error_combos[col].currentText()
 
-        dialog = DetailedClassificationWindow(initial_values=current_answers, parent=self)
+        dialog = DetailedClassificationWindow(initial_values=current_answers,row_number=self.current_index+1, total_rows=len(self.csv_data), parent=self)
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             final_responses = dialog.get_responses()
             for col in ERROR_COLUMNS:
@@ -327,12 +340,12 @@ class RowOverviewWindow(QtWidgets.QDialog):
 
     def save_and_next_row(self):
         self.save_current_row()
-        self.current_index += 1
-        if self.current_index >= len(self.csv_data):
+        if self.current_index + 1 < len(self.csv_data):
+            self.current_index += 1
+            self.load_row_into_ui(self.current_index)
+        else:
             QtWidgets.QMessageBox.information(self, "Done", "No more rows to annotate.")
             self.close()
-        else:
-            self.load_row_into_ui(self.current_index)
 
     def save_and_previous_row(self):
         self.save_current_row()
@@ -397,6 +410,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 reader = csv.DictReader(f)
                 headers = reader.fieldnames
 
+                for col in ERROR_COLUMNS:
+                    if col not in headers:
+                        headers.append(col)
+
                 missing = [c for c in REQUIRED_COLUMNS if c not in headers]
                 if missing:
                     QtWidgets.QMessageBox.warning(
@@ -406,6 +423,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     return
 
                 data = list(reader)
+
+                for row in data:
+                    for col in ERROR_COLUMNS:
+                        if col not in row:
+                            row[col] = "No"
+
 
             self.model = CSVTableModel(data, headers)
             self.table_view.setModel(self.model)
@@ -445,11 +468,18 @@ class MainWindow(QtWidgets.QMainWindow):
         data = self.model.getDataList()
         headers = self.model.getHeaders()
 
+        for col in ERROR_COLUMNS:
+            if col not in headers:
+                headers.append(col)
+
         try:
             with open(out_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=headers)
                 writer.writeheader()
                 for row in data:
+                    for col in ERROR_COLUMNS:
+                        if col not in row:
+                            row[col] = "No"
                     writer.writerow(row)
 
             QtWidgets.QMessageBox.information(self, "Saved", f"CSV saved to: {out_path}")
